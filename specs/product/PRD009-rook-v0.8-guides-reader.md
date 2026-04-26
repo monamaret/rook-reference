@@ -13,6 +13,8 @@
 
 This release introduces the `guides-service` and the `rook-cli` guide reader, enabling users to browse and read structured guides published within their space. Guides are Markdown documents with a YAML action block extension that embeds structured metadata — links, commands, checklists — parsed and rendered by the CLI. The reader uses glamour for Markdown rendering and lipgloss for styled navigation chrome. This release is read-only; guide authoring and publishing are delivered in v0.9.
 
+Offline reading is a first-class capability in this release: users can explicitly save guides to a local flat-file store and read them with no network connection, using the same sync-state model established by the stash feature (v0.5).
+
 ---
 
 ## Feature Focus
@@ -25,8 +27,13 @@ _To be detailed in scoping. Proposed areas:_
 - `rook-cli` guide list TUI: browsable index of published guides for the current space with title, author, and last-updated
 - `rook-cli` guide reader TUI: full-screen glamour-rendered Markdown view with lipgloss navigation chrome (breadcrumb, scroll position, keybindings footer)
 - YAML action parser in `rook-cli`: extract and render action blocks as interactive elements (e.g. copyable commands, clickable links)
-- Guide caching: store fetched guide content locally in the XDG cache directory with TTL-based invalidation
-- `rook guide list` and `rook guide read {id|slug}` CLI entrypoints
+- Guide TTL cache: store fetched guide content in the XDG cache directory with TTL-based invalidation — a performance layer for online reads only
+- Offline guide store: persistent flat-file store in `<storage-dir>/guides/saved/<space-id>/<guide-id>/`; separate from the TTL cache; survives cache eviction
+- Sync-state tracking per saved guide: `synced`, `stale`, `unavailable` — mirrors the stash sync-state model
+- `rook guide list` TUI: `📥` badge for locally saved guides
+- `rook guide list`, `rook guide read {id|slug}`, `rook guide save {id|slug}`, `rook guide saved`, `rook guide remove {id|slug}`, and `rook guide pull [id|slug]` CLI entrypoints
+- Offline fallback in `rook guide read`: render from local store with `⚠ Offline` notice when server unreachable; helpful error if guide not saved
+- Silent background pull on launcher startup: re-fetch saved guides if server version is newer; failures logged only
 
 ---
 
@@ -34,6 +41,7 @@ _To be detailed in scoping. Proposed areas:_
 
 - PRD008 v0.7 complete — launcher integration and space context required; guide tile in launcher must be wired up
 - PRD004 v0.3 complete — space-scoped data access pattern established
+- PRD006 v0.5 complete — sync-state model and background sync conventions established by stash sync
 
 ---
 
@@ -44,6 +52,9 @@ _To be detailed in scoping. Proposed areas:_
 - Guide versioning or diff view — always shows the current published version
 - Interactive action execution (e.g. running embedded shell commands) — actions are rendered but not executed
 - Guide access control beyond space-level membership
+- Auto-save on read — saving is always explicit (`rook guide save`) or pull-driven (`rook guide pull`)
+- Conflict resolution — read-only; stale copy replaced on pull, no merge required
+- Offline publishing or authoring — guide publish requires a live server connection
 
 ---
 
@@ -65,3 +76,6 @@ _Space for any early design notes, constraints, or decisions relevant to this re
 - glamour's default word wrap width should respect the terminal width; test on narrow terminals (80 col) as well as wide ones.
 - Guide slugs should be unique per space and URL-safe; the service should enforce uniqueness at write time (relevant for v0.9 publish).
 - Cache invalidation should be based on the guide's `updatedAt` timestamp fetched from the list endpoint, avoiding unnecessary full-body fetches.
+- The offline store uses flat files — not SQLite. Guides are read-only for readers (no dirty state, no local editing), so a flat directory is sufficient, has no new dependencies, and is directly inspectable.
+- `rook guide pull` staleness check: compare local `synced_at` vs server `published_at` from GET /guides list — one lightweight call, full re-fetch only when stale.
+- Offline store path `<storage-dir>/guides/saved/<space-id>/<guide-id>/` follows the same convention as stash.

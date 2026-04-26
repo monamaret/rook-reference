@@ -180,6 +180,19 @@ Guides are authored entirely within `rook-cli` via a dedicated guide builder TUI
 - **Update access**: configure which space groups can see the guide in their wishlist
 - **Delete**: removes the guide from Firestore and optionally the local draft
 
+#### Offline Reading
+
+Users can save published guides for offline reading using an explicit save command. Saved guides are stored in `<storage-dir>/guides/saved/<space-id>/<guide-id>/` as flat files (same convention as the stash and messages stores).
+
+- **Save**: `rook guide save {id|slug}` — downloads the full guide bundle and writes it to the offline store
+- **List saved**: `rook guide saved` — list TUI showing all locally saved guides with sync-state icons (`✓ synced`, `↑ stale`, `? unavailable`)
+- **Remove**: `rook guide remove {id|slug}` — deletes the guide from the offline store (with confirmation prompt)
+- **Pull**: `rook guide pull [id|slug]` — re-fetches saved guides from the server if a newer version exists; sets `unavailable` on error without losing local copy
+- **Offline read fallback**: `rook guide read` checks the local store when the server is unreachable; renders with an `⚠ Offline` notice; shows a helpful error if the guide is not saved
+- **List badge**: `rook guide list` annotates saved guides with a `📥` badge
+- **Background pull**: on launcher startup, a silent goroutine re-fetches all saved guides for the current space if newer server versions exist; failures are logged only, never shown in the UI
+- **Sync state**: `synced` | `stale` | `unavailable` — mirrors the stash sync-state model
+
 ### 9. Rendering and Styling Stack
 
 | Purpose | Library |

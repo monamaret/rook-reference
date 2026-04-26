@@ -359,6 +359,19 @@ Both calls use OIDC-authenticated service accounts as specified in [`2026-04-25-
 - `rook-cli/guides/builder/` — guide builder TUI (new, edit, preview, validate, publish, manage)
 - `rook-cli/guides/validator/` — YAML config schema validator, lipgloss style validator, markdown link checker
 - `rook-cli/guides/client.go` — HTTP client for `GET /guides`, `GET /guide/{id}`, `POST /guide`, `PATCH`, `DELETE`
+- `rook-cli/guides/store/store.go` — flat-file offline store: Save, Remove, Get, List, ListIDs; atomic write via temp dir + os.Rename
+- `rook-cli/guides/sync/pull.go` — pull logic: compare synced_at vs server published_at, selective re-fetch, sync_state update
+- `rook-cli/guides/tui/saved_list.go` — `rook guide saved` list TUI with sync-state icons
+- `rook-cli/cmd/guide_save.go` — `rook guide save` command
+- `rook-cli/cmd/guide_saved.go` — `rook guide saved` command
+- `rook-cli/cmd/guide_remove.go` — `rook guide remove` command
+- `rook-cli/cmd/guide_pull.go` — `rook guide pull` command
+
+**rook-cli (modifications to existing files):**
+- `rook-cli/guides/client.go` — add sentinel network-error type for offline fallback detection
+- `rook-cli/guides/reader.go` — offline fallback path; render ⚠ Offline banner from local store
+- `rook-cli/guides/tui/guide_list.go` — 📥 badge for saved guides
+- `rook-cli/launcher/startup.go` — silent background guide pull goroutine on session start
 
 ### Dependencies
 
