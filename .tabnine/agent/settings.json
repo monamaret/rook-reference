@@ -1,0 +1,13 @@
+{
+  "general": {
+    "checkpointing": {
+      "enabled": true
+    },
+    "ide": {
+        "enabled": true
+    }
+  },
+  "experimental": {
+    "enableAgents": true
+  }
+}

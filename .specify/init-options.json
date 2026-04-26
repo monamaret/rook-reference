@@ -1,0 +1,10 @@
+{
+  "ai": "tabnine",
+  "branch_numbering": "sequential",
+  "context_file": "TABNINE.md",
+  "here": true,
+  "integration": "tabnine",
+  "preset": null,
+  "script": "sh",
+  "speckit_version": "0.7.3"
+}

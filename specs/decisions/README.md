@@ -1,0 +1,26 @@
+# Architecture Decision Records (ADR)
+
+An Architecture Decision Record (ADR) captures an important architecture decision along with its context and consequences.
+
+## Conventions
+
+- Directory: `docs/decisions/`
+- Naming: Date-prefixed files — `YYYY-MM-DD-short-title.md`
+- Status values: `proposed`, `accepted`, `rejected`, `deprecated`, `superseded`
+
+## Workflow
+
+- Create a new ADR as `proposed`.
+- Discuss and iterate.
+- When the team commits: mark it `accepted` (or `rejected`).
+- If replaced later: create a new ADR and mark the old one `superseded` with a link.
+
+## ADRs
+
+| Date | Title | Status |
+|------|-------|--------|
+| 2026-04-25 | [Adopt Architecture Decision Records](2026-04-25-adopt-adrs.md) | accepted |
+| 2026-04-25 | [Rook Reference System Architecture](2026-04-25-rook-reference-system-architecture.md) | proposed |
+| 2026-04-25 | [Real-Time Messaging Protocol: IRC vs. Custom](2026-04-25-real-time-messaging-protocol.md) | proposed |
+| 2026-04-25 | [rook-cli Features and UX Architecture](2026-04-25-rook-cli-features-and-ux-architecture.md) | proposed |
+| 2026-04-25 | [Use gRPC for rook-server Inter-Service Communication](2026-04-25-grpc-inter-service-communication.md) | accepted |
