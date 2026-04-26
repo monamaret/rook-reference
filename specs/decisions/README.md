@@ -26,3 +26,4 @@ An Architecture Decision Record (ADR) captures an important architecture decisio
 | 2026-04-25 | [Use gRPC for rook-server Inter-Service Communication](2026-04-25-grpc-inter-service-communication.md) | accepted |
 | 2026-04-25 | [SSH Auth Identity Chain and Cloud Run Deployment Topology](2026-04-25-ssh-auth-identity-chain-and-cloud-run-topology.md) | proposed |
 | 2026-04-25 | [Guides Service Architecture](2026-04-25-guides-service-architecture.md) | proposed |
+| 2026-04-26 | [Adopt GitHub Actions CI/CD Pipeline](2026-04-26-github-actions-ci-cd-pipeline.md) | accepted |

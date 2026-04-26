@@ -1,0 +1,205 @@
+# Release workflow — tag-triggered build, push, and Cloud Run deploy
+# ADR: specs/decisions/2026-04-26-github-actions-ci-cd-pipeline.md
+#
+# Triggered by pushing a semver tag (e.g. v0.1.0).
+# Builds each Go service image, pushes to Artifact Registry,
+# and deploys to the corresponding Cloud Run service.
+#
+# Prerequisites:
+#   - GCP Workload Identity Federation configured (see references/wif-setup.md)
+#   - GitHub secrets: GCP_WORKLOAD_IDENTITY_PROVIDER, GCP_SERVICE_ACCOUNT
+#   - Artifact Registry repository exists
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+env:
+  REGISTRY: <region>-docker.pkg.dev/<gcp-project>/rook-images
+
+jobs:
+  # ─── Auth (shared across all deploy jobs) ──────────────────────────────────
+  # Each deploy job authenticates independently via WIF.
+  # This top-level job is a placeholder showing the auth pattern.
+
+  # ─── Auth Service ──────────────────────────────────────────────────────────
+  deploy-auth-service:
+    name: Deploy auth-service
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # required for Workload Identity Federation
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Log in to Artifact Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+
+      - name: Build and push auth-service image
+        uses: docker/build-push-action@v6
+        with:
+          context: rook-server/auth-service
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/auth-service:${{ github.ref_name }}
+            ${{ env.REGISTRY }}/auth-service:latest
+
+      - name: Deploy auth-service to Cloud Run
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: rook-auth-service
+          image: ${{ env.REGISTRY }}/auth-service:${{ github.ref_name }}
+          region: <region>
+
+  # ─── User Service ───────────────────────────────────────────────────────────
+  deploy-user-service:
+    name: Deploy user-service
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: rook-server/user-service
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/user-service:${{ github.ref_name }}
+            ${{ env.REGISTRY }}/user-service:latest
+      - uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: rook-user-service
+          image: ${{ env.REGISTRY }}/user-service:${{ github.ref_name }}
+          region: <region>
+
+  # ─── Stash Service ──────────────────────────────────────────────────────────
+  deploy-stash-service:
+    name: Deploy stash-service
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: rook-server/stash-service
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/stash-service:${{ github.ref_name }}
+            ${{ env.REGISTRY }}/stash-service:latest
+      - uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: rook-stash-service
+          image: ${{ env.REGISTRY }}/stash-service:${{ github.ref_name }}
+          region: <region>
+
+  # ─── Messaging Service ──────────────────────────────────────────────────────
+  deploy-messaging-service:
+    name: Deploy messaging-service
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: rook-server/messaging-service
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/messaging-service:${{ github.ref_name }}
+            ${{ env.REGISTRY }}/messaging-service:latest
+      - uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: rook-messaging-service
+          image: ${{ env.REGISTRY }}/messaging-service:${{ github.ref_name }}
+          region: <region>
+
+  # ─── Guides Service ─────────────────────────────────────────────────────────
+  deploy-guides-service:
+    name: Deploy guides-service
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: rook-server/guides-service
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/guides-service:${{ github.ref_name }}
+            ${{ env.REGISTRY }}/guides-service:latest
+      - uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: rook-guides-service
+          image: ${{ env.REGISTRY }}/guides-service:${{ github.ref_name }}
+          region: <region>
+
+  # ─── rook-cli ───────────────────────────────────────────────────────────────
+  deploy-rook-cli:
+    name: Build and release rook-cli binary
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # for uploading release assets
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: rook-cli/go.mod
+          cache-dependency-path: rook-cli/go.sum
+      - name: Build rook-cli binaries
+        run: |
+          cd rook-cli
+          GOOS=linux GOARCH=amd64 go build -o ../dist/rook-linux-amd64 ./...
+          GOOS=darwin GOARCH=arm64 go build -o ../dist/rook-darwin-arm64 ./...
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*

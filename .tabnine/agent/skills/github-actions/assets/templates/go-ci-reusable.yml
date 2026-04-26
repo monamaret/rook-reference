@@ -1,0 +1,50 @@
+# Reusable Go CI workflow
+# ADR: specs/decisions/2026-04-26-github-actions-ci-cd-pipeline.md
+#
+# Called by all per-component Go CI workflows via `uses:`.
+# Do NOT call this workflow directly from external repositories.
+# All Go CI steps live here — do not duplicate them in per-component files.
+
+name: Go CI (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: 'Path to the Go module root (directory containing go.mod)'
+        required: true
+        type: string
+      go-version-file:
+        description: 'Path to go.mod for version detection (relative to working-directory)'
+        required: false
+        type: string
+        default: 'go.mod'
+
+jobs:
+  go-ci:
+    name: Lint / Test / Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: '${{ inputs.working-directory }}/${{ inputs.go-version-file }}'
+          cache-dependency-path: '${{ inputs.working-directory }}/go.sum'
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          working-directory: ${{ inputs.working-directory }}
+
+      - name: Test
+        run: go test ./... -race -count=1
+
+      - name: Build
+        run: go build ./...

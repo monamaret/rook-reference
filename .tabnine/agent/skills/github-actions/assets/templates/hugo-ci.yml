@@ -1,0 +1,43 @@
+# GitHub Actions CI — <site-dir> (Hugo)
+# ADR: specs/decisions/2026-04-26-github-actions-ci-cd-pipeline.md
+#
+# Builds the Hugo site to verify it compiles without errors.
+# Does not deploy — deployment is a separate concern.
+
+name: CI — <site-dir>
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '<site-dir>/**'
+      - '.github/workflows/ci-<site-dir>.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - '<site-dir>/**'
+      - '.github/workflows/ci-<site-dir>.yml'
+
+jobs:
+  hugo-build:
+    name: Hugo Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: <site-dir>
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+
+      - name: Set up Hugo
+        uses: peaceiris/actions-hugo@v3
+        with:
+          hugo-version: '0.147.0'   # pin to the version in use locally
+          extended: true
+
+      - name: Build
+        run: hugo --minify

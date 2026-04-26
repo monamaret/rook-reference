@@ -1,0 +1,28 @@
+# GitHub Actions CI — <display-name>
+# ADR: specs/decisions/2026-04-26-github-actions-ci-cd-pipeline.md
+#
+# Triggered only when files in this component's directory change.
+# Delegates all CI steps to the shared reusable workflow (_go-ci.yml).
+
+name: CI — <display-name>
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '<component-dir>/**'
+      - '.github/workflows/ci-<service-name>.yml'
+      - '.github/workflows/_go-ci.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - '<component-dir>/**'
+      - '.github/workflows/ci-<service-name>.yml'
+      - '.github/workflows/_go-ci.yml'
+
+jobs:
+  ci:
+    name: Lint / Test / Build
+    uses: ./.github/workflows/_go-ci.yml
+    with:
+      working-directory: <component-dir>
