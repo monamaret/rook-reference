@@ -29,3 +29,6 @@ An Architecture Decision Record (ADR) captures an important architecture decisio
 | 2026-04-25 | [Guides Offline Store](2026-04-25-guides-offline-store.md) | proposed |
 | 2026-04-25 | [rook-server Admin CLI](2026-04-25-rook-server-admin-cli.md) | proposed |
 | 2026-04-26 | [Adopt GitHub Actions CI/CD Pipeline](2026-04-26-github-actions-ci-cd-pipeline.md) | accepted |
+| 2026-04-26 | [v0.1 Foundational Decisions — Repo Structure, Config Format, Go Workspace, Admin CLI Stub](2026-04-26-v0.1-foundational-decisions.md) | accepted |
+| 2026-04-26 | [v0.2 Auth Foundation Decisions — Session Token Format, Nonce Lifecycle, SSH Key Selection](2026-04-26-v0.2-auth-foundation-decisions.md) | accepted |
+| 2026-04-26 | [v0.3 Spaces and Identity Decisions — Group Cardinality, App Tile Availability, Zero-Space State](2026-04-26-v0.3-spaces-and-identity-decisions.md) | accepted |
