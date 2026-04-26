@@ -56,6 +56,18 @@ steps:
     input:
       args: "{{ inputs.spec }}"
 
+  - id: taskstoissues
+    command: speckit.taskstoissues
+    integration: "{{ inputs.integration }}"
+    input:
+      args: "{{ inputs.spec }}"
+
+  - id: review-tasks
+    type: gate
+    message: "Review the generated GitHub issues before implementation begins."
+    options: [approve, reject]
+    on_reject: abort
+
   - id: implement
     command: speckit.implement
     integration: "{{ inputs.integration }}"
