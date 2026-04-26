@@ -395,7 +395,7 @@ Firestore root
 │
 ├── auth/
 │   └── nonces/
-│       └── {nonce} (doc)           # user-service — challenge nonce + TTL + used flag
+│       └── {nonce} (doc)           # user-service — {expires_at, used}; TTL policy on expires_at auto-deletes within 72h
 │
 ├── messages/
 │   └── {space_id}/                 # messaging-service

@@ -103,7 +103,7 @@ The CLI authenticates its identity using a **challenge-response protocol** over 
 5. On success, `user-service` creates a session token (random, 32-byte, hex-encoded), stores it in Firestore under `sessions/{token}` with the user ID and a 1-hour TTL, and returns it to the CLI
 6. The CLI caches the session token in-memory for the duration of the process and attaches it as `Authorization: Bearer <token>` on all subsequent HTTPS requests
 
-**Nonce storage**: Nonces are stored in Firestore under `auth/nonces/{nonce}` with a 60-second TTL and marked used on first verification — preventing replay attacks.
+**Nonce storage**: Nonces are stored in Firestore under `auth/nonces/{nonce}` with an `expires_at` timestamp set 60 seconds from issuance. Application code enforces the 60-second validity window by checking `expires_at` at read time. A Firestore TTL policy is configured on the `expires_at` field of the `auth/nonces` collection — Firestore automatically deletes expired documents within 72 hours of expiry, keeping the collection bounded without application-level cleanup. Nonces are marked used on first verification to prevent replay attacks regardless of TTL.
 
 **Session token properties:**
 
@@ -152,7 +152,7 @@ The middleware is implemented once in `rook-server/internal/middleware/` and imp
 - Good, because removing `charmbracelet/wish` and `charmbracelet/wishlist` from the server eliminates a dependency on SSH transport entirely, simplifying local development and debugging
 - Bad, because `charmbracelet/wish` is removed from the server boundary, which supersedes the system architecture ADR's explicit choice of the Charmbracelet SSH ecosystem for auth — that ADR must be updated
 - Bad, because the challenge-response auth flow requires two HTTP round-trips before the first authenticated request, versus one SSH handshake
-- Bad, because nonce storage in Firestore adds a write on every new session initiation — negligible at PoC scale
+- Neutral, because nonce storage in Firestore adds a write on every auth initiation — the collection is kept bounded by a Firestore TTL policy on `expires_at` which automatically deletes documents within 72 hours of expiry
 - Neutral, because `ValidateSession` adds a gRPC round-trip on every authenticated request — acceptable at PoC scale; an in-process cache keyed on the token (TTL: 5 minutes) can be added if latency is a concern
 
 ## Implementation Plan
@@ -241,6 +241,7 @@ N/A — greenfield. No existing service is being replaced; `charmbracelet/wish` 
 - [ ] `POST /auth/verify` with an invalid signature returns `401 Unauthorized`
 - [ ] `POST /auth/verify` with an expired nonce (>60 seconds old) returns `401 Unauthorized`
 - [ ] `POST /auth/verify` with a replayed (already-used) nonce returns `401 Unauthorized`
+- [ ] Firestore TTL policy is configured on the `expires_at` field of the `auth/nonces` collection — verified with `gcloud firestore fields ttls describe --collection-group=nonces --field-path=expires_at`
 - [ ] A Cloud Run service rejects a request with no `Authorization` header with `401 Unauthorized`
 - [ ] A Cloud Run service rejects a request with an expired session token with `401 Unauthorized`
 - [ ] A Cloud Run service rejects a request with an unknown session token with `401 Unauthorized`
