@@ -78,18 +78,19 @@ The root of the CLI. Always the entry and exit point for all other features.
 
 **Behaviour:**
 - Selecting a local feature opens it full-screen; exit returns to launcher
-- Selecting a server feature initiates the `rook ssh user@server` handshake if not already authenticated for that session, then opens the feature full-screen
+- Selecting a server feature initiates the `rook auth user@server` challenge-response flow if not already authenticated for that session, then opens the feature full-screen
 - Server reachability indicators do not block launcher interaction — the user can open local features immediately
 
 ### 3. Authentication and Server Handshake
 
-Subcommand: `rook ssh user@server`
+Subcommand: `rook auth user@server`
 
-- Uses `charmbracelet/wish` for SSH key-based authentication
-- Uses `charmbracelet/wishlist` for service/app discovery after auth
-- Wishlist response is space-scoped and group-ACL-filtered: the user sees only the apps their group has permission to access in their current space
-- Auth state is held for the duration of the CLI session; re-auth is required on next launch
-- If the user belongs to multiple spaces on a server, the launcher home screen shows the space selector with an emoji indicator for the active space; switching spaces re-scopes the wishlist and all connected features to the selected space
+- Uses HTTPS challenge-response with the user's SSH private key: fetches a nonce from `GET /auth/challenge`, signs it locally, submits to `POST /auth/verify`, receives an opaque session token
+- Session token is cached in-memory for the duration of the CLI session and attached as `Authorization: Bearer` on all subsequent HTTPS requests; re-auth is required on next launch
+- App/space discovery via authenticated HTTP endpoints on `user-service`: `GET /spaces` and `GET /spaces/{space-id}/apps`; response is space-scoped and group-ACL-filtered — the user sees only apps their group has permission to access
+- All requests include `X-Rook-Space-ID` header so the server can resolve space membership alongside identity in a single call
+- If the user belongs to multiple spaces on a server, the launcher home screen shows the space selector with an emoji indicator for the active space; switching spaces re-scopes app discovery and all connected features to the selected space
+- See [`2026-04-25-ssh-auth-identity-chain-and-cloud-run-topology.md`](2026-04-25-ssh-auth-identity-chain-and-cloud-run-topology.md) for the full auth protocol specification
 
 ### 4. Spaces, Groups, and Access Control
 
@@ -188,9 +189,7 @@ Guides are authored entirely within `rook-cli` via a dedicated guide builder TUI
 | TUI component styling (layout, colour, borders) | `charmbracelet/lipgloss` |
 | TUI component primitives (lists, inputs, viewports) | `charmbracelet/bubbles` |
 | TUI application framework | `charmbracelet/bubbletea` |
-| SSH auth and server handshake | `charmbracelet/wish` |
-| Service/app discovery | `charmbracelet/wishlist` |
-| User management and file store primitives (evaluate before custom impl) | `charmbracelet/charm` |
+| SSH key loading and request signing (HTTPS challenge-response auth) | `golang.org/x/crypto/ssh` |
 
 ---
 
@@ -200,14 +199,14 @@ Guides are authored entirely within `rook-cli` via a dedicated guide builder TUI
   - `rook-cli/main.go` — entry point; detects first-run, launches setup flow or launcher
   - `rook-cli/setup/` — first-run Bubble Tea setup flow
   - `rook-cli/launcher/` — home screen model (server status, shortcuts, space selector)
-  - `rook-cli/auth/` — SSH handshake, wishlist negotiation, session state
+  - `rook-cli/auth/` — HTTPS challenge-response flow, SSH key signing, session token cache
   - `rook-cli/stash/` — document stash: browse, view (glow), edit ($EDITOR handoff), sync
   - `rook-cli/search/` — unified local + server search
   - `rook-cli/messaging/` — conversation list, thread view, compose, sync
   - `rook-cli/guides/` — guide loader, glamour renderer, lipgloss style loader, YAML action parser
   - `rook-cli/guides/builder/` — guide builder TUI (new, edit, preview, validate, publish, manage)
   - `rook-cli/guides/validator/` — YAML config schema validator, lipgloss style validator, markdown link checker
-  - `rook-cli/spaces/` — space selector, membership cache, ACL cache
+  - `rook-cli/spaces/` — space selector, HTTP-based space/app discovery, membership and ACL cache
   - `rook-cli/config/` — local config read/write (`$XDG_CONFIG_HOME/rook/config.json`)
 - **Dependencies**:
   - `charmbracelet/bubbletea` — TUI framework
@@ -215,9 +214,7 @@ Guides are authored entirely within `rook-cli` via a dedicated guide builder TUI
   - `charmbracelet/lipgloss` — styling
   - `charmbracelet/glamour` — markdown rendering for guides
   - `charmbracelet/glow` — markdown viewing for stash and messages
-  - `charmbracelet/wish` — SSH auth
-  - `charmbracelet/wishlist` — service discovery
-  - `charmbracelet/charm` — evaluate for user management and file store before implementing custom
+  - `golang.org/x/crypto/ssh` — SSH key loading and signing for HTTPS challenge-response auth
 - **Patterns to follow**:
   - Each major feature area is its own Bubble Tea `Model` with its own `Update`/`View`; the launcher composes them
   - Online and offline logic are strictly separated within each feature model
@@ -225,7 +222,7 @@ Guides are authored entirely within `rook-cli` via a dedicated guide builder TUI
   - All local state is flat files under `<storage-dir>/`; no embedded database
   - Space directory structure is always `<storage-dir>/<feature>/<space-id>/` to ensure segregation
   - Config file is always at `$XDG_CONFIG_HOME/rook/config.json`; storage root is always read from `storage-dir` in config
-  - Wishlist app list is cached locally in `.json` and refreshed on each successful auth
+  - Space and app list is fetched from `GET /spaces` and `GET /spaces/{space-id}/apps` after each successful auth, cached locally in `<storage-dir>/cache/spaces.json`, and refreshed on each new session
 - **Patterns to avoid**:
   - Do not background-poll servers — all network activity is user- or event-initiated
   - Do not share state between spaces in any local data structure
@@ -248,7 +245,7 @@ Guides are authored entirely within `rook-cli` via a dedicated guide builder TUI
 - [ ] Binary builds and runs correctly under WSL on Windows; XDG paths resolve within the WSL environment
 - [ ] Launcher displays server reachability indicators (🟢/🔴) for each configured server on open
 - [ ] Launcher is fully interactive while server status check is pending — no blocking
-- [ ] `rook ssh user@server` authenticates via SSH key and presents space-filtered wishlist
+- [ ] `rook auth user@server` completes the HTTPS challenge-response flow and the CLI receives a session token; subsequent requests to all services succeed with that token
 - [ ] User with multiple spaces sees a space selector with emoji active indicator on the launcher home screen; switching space re-scopes wishlist and connected features
 - [ ] User with a single space sees no space selector on the launcher home screen
 - [ ] Document stash: create, browse, and view a `.md` file with no server connection
@@ -288,8 +285,8 @@ Guides are authored entirely within `rook-cli` via a dedicated guide builder TUI
 **1. Local config path** ✅ Resolved
 Config is stored at `$XDG_CONFIG_HOME/rook/config.json`. Flat-file storage is under `$XDG_CONFIG_HOME/rook/storage/` by default, with a `storage-dir` config key allowing full relocation. No data is written to the home directory root. XDG was chosen over `~/.rook/` to correctly separate config from data and follow platform conventions on all supported environments (macOS, Linux, WSL).
 
-**2. `charmbracelet/charm` evaluation** ✅ Resolved
-`charmbracelet/charm` is archived (March 2025) and must not be used as a backend primitive. See the messaging protocol ADR deferred decision 2 for full rationale. Server-side file store and user management are implemented using **Google Cloud Firestore** (`cloud.google.com/go/firestore`). The CLI-side file store remains plain flat files as specified — no charm dependency required.
+**2. `charmbracelet/charm`, `wish`, and `wishlist` evaluation** ✅ Resolved
+`charmbracelet/charm` is archived (March 2025) and must not be used as a backend primitive. `charmbracelet/wish` and `charmbracelet/wishlist` are not used anywhere in the system — server auth and app discovery are handled over HTTPS (see [`2026-04-25-ssh-auth-identity-chain-and-cloud-run-topology.md`](2026-04-25-ssh-auth-identity-chain-and-cloud-run-topology.md)). Server-side file store and user management are implemented using **Google Cloud Firestore** (`cloud.google.com/go/firestore`). The CLI-side file store remains plain flat files as specified.
 
 **3. Guide distribution** ✅ Resolved
 Guides are authored and published entirely within `rook-cli` via a dedicated guide builder TUI. No separate admin tooling or server-side filesystem access is required. The builder scaffolds local draft assets (`.md`, lipgloss `.yml`, YAML config) in `<storage-dir>/guides/drafts/<guide-id>/`, provides `$EDITOR` handoff for authoring, a full-screen preview, inline validation (YAML schema, lipgloss properties, markdown links), and a publish command that uploads validated assets to the guides service on `rook-server`. Publish is blocked until validation passes. Local drafts are retained as the editable source of truth after publish.

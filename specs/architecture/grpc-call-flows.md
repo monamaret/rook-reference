@@ -14,26 +14,27 @@ All inter-service calls are unary gRPC over HTTP/2. Cloud Run manages TLS. Each 
                           ┌─────────────────────────────────────────────────────┐
                           │                  rook-server (Cloud Run)            │
                           │                                                     │
-  rook-cli ──SSH──────────┤──► user-service    ◄──── all services call this    │
-            (wish/        │         │           ◄──── rook-server-cli (admin)  │
-            wishlist)     │         │ gRPC (UserService / AdminService)        │
-                          │         ▼                                           │
-  rook-cli ──HTTP──────── ├──► messaging-service                               │
+  rook-cli ──HTTPS────────┤──► user-service    ◄──── all services call this    │
+            (auth +       │         │           ◄──── rook-server-cli (admin)  │
+            space/app     │         │ gRPC (UserService / AdminService)        │
+            discovery)    │         ▼                                           │
+                          │                                                     │
+  rook-cli ──HTTPS──────── ├──► messaging-service                               │
             (sync pull)   │         │                                           │
                           │         │ gRPC (UserService)                       │
                           │         ▼                                           │
-  rook-cli ──HTTP──────── ├──► stash-service                                   │
+  rook-cli ──HTTPS──────── ├──► stash-service                                   │
             (sync pull)   │         │                                           │
                           │         │ gRPC (UserService)                       │
                           │         ▼                                           │
-  rook-cli ──HTTP──────── └──► guides-service                                  │
+  rook-cli ──HTTPS──────── └──► guides-service                                  │
             (guide fetch)                                                       │
                           └─────────────────────────────────────────────────────┘
 
   rook-server-cli ──gRPC (AdminService, bearer token)──► user-service
   (admin key registration, user/space management — never exposed to rook-cli)
 
-  External interface: SSH (wish/wishlist) for auth; HTTP for data sync and guide fetch
+  External interface: HTTPS for all rook-cli communication (auth, data sync, guide fetch)
   Admin interface: gRPC (AdminService) with pre-shared admin token — rook-server-cli only
   Internal interface: gRPC only — no HTTP between services
   Data layer: each service owns its own Firestore collection namespace
@@ -45,10 +46,10 @@ All inter-service calls are unary gRPC over HTTP/2. Cloud Run manages TLS. Each 
 
 | Component | External interface | gRPC role | Firestore namespace |
 |-----------|-------------------|-----------|---------------------|
-| `user-service` | SSH (wish + wishlist) | Server: `UserService` + `AdminService` | `users/`, `spaces/`, `groups/` |
-| `messaging-service` | HTTP (pull sync) | Client of `UserService` | `messages/` |
-| `stash-service` | HTTP (pull sync) | Client of `UserService` | `stash/` |
-| `guides-service` | HTTP (guide fetch) | Client of `UserService` | `guides/` |
+| `user-service` | HTTPS (auth challenge-response, space/app discovery) | Server: `UserService` + `AdminService` | `users/`, `spaces/`, `groups/`, `sessions/`, `auth/nonces/` |
+| `messaging-service` | HTTPS (pull sync) | Client of `UserService` | `messages/` |
+| `stash-service` | HTTPS (pull sync) | Client of `UserService` | `stash/` |
+| `guides-service` | HTTPS (guide fetch + publish) | Client of `UserService` | `guides/` |
 | `rook-server-cli` | gRPC (`AdminService`, admin token) | Client of `AdminService` | — (writes via `user-service`) |
 
 ---
@@ -59,17 +60,30 @@ All services except `user-service` are consumers of `UserService`. Defined in `r
 
 ```
 UserService
+├── ValidateSession(token, space_id) → {user_id, space_membership}
+│     Validates an opaque session token and resolves both user identity and space
+│     membership in one call. Called by the SessionAuthMiddleware in every service
+│     on every authenticated request. The X-Rook-Space-ID request header provides
+│     the space_id. Returns user_id + group on success; UNAUTHENTICATED if token
+│     is missing/expired/unknown; PERMISSION_DENIED if user is not a member of space_id.
+│     Called by: messaging-service, stash-service, guides-service (via shared middleware)
+│
 ├── GetUserByKey(fingerprint) → User
 │     Resolves a user identity from their SSH public key fingerprint.
-│     Called by: messaging-service, stash-service, guides-service
+│     Internal to user-service only — called during POST /auth/verify to look up
+│     the registered public key before verifying the challenge signature.
+│     NOT called by downstream services directly.
 │
 ├── GetSpaceMembership(user_id, space_id) → SpaceMembership
 │     Returns the user's group within a space, or NOT_FOUND if not a member.
-│     Called by: messaging-service, stash-service, guides-service
+│     Retained for use cases where space membership must be checked independently
+│     of session validation (e.g. admin operations, internal user-service logic).
+│     NOT called by downstream services in the normal request path — ValidateSession
+│     subsumes this call.
 │
 └── CheckAppAccess(user_id, space_id, app_id) → AccessDecision
       Returns ALLOWED or DENIED based on the user's group ACL for the given app.
-      Called by: guides-service (wishlist filtering), stash-service (shared doc access)
+      Called by: guides-service (defence-in-depth access check on guide fetch)
 ```
 
 ---
@@ -141,153 +155,206 @@ rook-server-cli                        user-service
        │                                    │   (group: "users")
 ```
 
-The user can now authenticate:
+The user can now authenticate using `rook auth`:
 
 ```
-rook-cli                               user-service (wish)
+rook-cli                               user-service
    │                                        │
-   │──SSH connect (public key in handshake)─►│
-   │                                        │ look up fingerprint in
-   │                                        │ users/{id}/keys/ → match found
-   │                                        │ resolve space membership + ACL
-   │◄──wishlist (space-filtered apps)───────│
+   │──HTTPS GET /auth/challenge─────────────►│
+   │                                        │ generate nonce (32 bytes, hex)
+   │                                        │ store in Firestore auth/nonces/{nonce}
+   │                                        │ with 60s TTL
+   │◄──{nonce}──────────────────────────────│
+   │                                        │
+   │ signs nonce with SSH private key        │
+   │ (golang.org/x/crypto/ssh)              │
+   │                                        │
+   │──HTTPS POST /auth/verify───────────────►│
+   │  body: {public_key, nonce, signature}  │ fetch registered key from
+   │                                        │ users/{id}/keys/{fingerprint}
+   │                                        │ verify signature (pubKey.Verify)
+   │                                        │ mark nonce used (atomic write)
+   │                                        │ create session token (32 bytes, hex)
+   │                                        │ store in Firestore sessions/{token}
+   │                                        │ with 1h TTL
+   │◄──{session_token}──────────────────────│
+   │                                        │
+   │ cache token in-memory (session-scoped) │
+   │                                        │
+   │──HTTPS GET /spaces─────────────────────►│
+   │  Authorization: Bearer <session_token> │ validate token, return space list
+   │◄──{spaces: [...], acl: {...}}──────────│
 ```
 
 ---
 
-### 1. CLI Authentication and Wishlist
+### 1. CLI Authentication (HTTPS Challenge-Response)
 
-The user runs `rook ssh user@server`. This is an SSH connection handled by `charmbracelet/wish` and `charmbracelet/wishlist` — not a gRPC call. The wishlist response is filtered by the user's space and group ACL.
+The user runs `rook auth user@server`. This is an HTTPS exchange with `user-service` — not an SSH connection.
 
 ```
-rook-cli                    user-service (wish/wishlist)
+rook-cli                    user-service
    │                               │
-   │──SSH connect──────────────────►│
-   │   (public key in handshake)    │
-   │                               │ look up user by key fingerprint
-   │                               │ (internal: Firestore users/ lookup)
-   │                               │ resolve space membership
-   │                               │ filter wishlist by group ACL
-   │◄──wishlist (filtered apps)────│
-   │
-   │ (user selects a space if multi-space;
-   │  wishlist is already scoped to that space)
+   │──HTTPS GET /auth/challenge────►│
+   │                               │ generate nonce (random 32 bytes, hex-encoded)
+   │                               │ store in Firestore auth/nonces/{nonce} (TTL: 60s)
+   │◄──{nonce}─────────────────────│
+   │                               │
+   │ load SSH private key from     │
+   │ config (key path)             │
+   │ sign nonce with               │
+   │ golang.org/x/crypto/ssh       │
+   │                               │
+   │──HTTPS POST /auth/verify──────►│
+   │  {public_key, nonce,          │ look up fingerprint in users/{id}/keys/
+   │   signature}                  │ call GetUserByKey(fingerprint) [internal]
+   │                               │ verify signature: pubKey.Verify(nonce, sig)
+   │                               │ confirm nonce not expired, not yet used
+   │                               │ mark nonce used in Firestore (atomic)
+   │                               │ create session token (random 32 bytes, hex)
+   │                               │ write to Firestore sessions/{token}:
+   │                               │   {user_id, expires_at: now+1h}
+   │◄──{session_token}─────────────│
+   │                               │
+   │ hold token in-memory          │
+   │ (discarded on process exit)   │
+   │                               │
+   │──HTTPS GET /spaces────────────►│
+   │  Authorization: Bearer <token>│ ValidateSession(token, space_id="")
+   │  (no space yet)               │ return all spaces user belongs to
+   │◄──{spaces: [...]}─────────────│
+   │                               │
+   │ (user selects active space    │
+   │  if multi-space; space        │
+   │  selector shown in launcher)  │
+   │                               │
+   │──HTTPS GET /spaces/{id}/apps──►│
+   │  Authorization: Bearer <token>│ ACL-filter apps by user's group
+   │  X-Rook-Space-ID: {space_id}  │
+   │◄──{apps: [...]}───────────────│
+   │                               │
+   │ cache to                      │
+   │ <storage-dir>/cache/spaces.json
 ```
 
-No gRPC involved here — this is the SSH entry point. gRPC is used only for service-to-service calls triggered by subsequent CLI HTTP requests.
+No gRPC involved in the CLI auth flow — this is entirely HTTPS between `rook-cli` and `user-service`.
 
 ---
 
 ### 2. Messaging Sync (Pull)
 
-The user triggers a sync from the messaging view in `rook-cli`. The CLI sends an HTTP request to `messaging-service`. Before returning messages, the messaging service verifies the caller's identity and space membership via gRPC to `user-service`.
+The user triggers a sync from the messaging view. All requests carry the session token and `X-Rook-Space-ID`. The `SessionAuthMiddleware` resolves identity and space membership in a single `ValidateSession` gRPC call before the handler runs.
 
 ```
 rook-cli                messaging-service              user-service
    │                          │                             │
-   │──HTTP GET /sync──────────►│                             │
-   │  (Bearer: SSH key token)  │                             │
-   │                          │──GetUserByKey(fingerprint)──►│
-   │                          │◄──User{id, ...}─────────────│
+   │──HTTPS GET /sync──────────►│                             │
+   │  Authorization: Bearer    │                             │
+   │  X-Rook-Space-ID: {id}    │                             │
+   │                          │──ValidateSession(token,──────►│
+   │                          │   space_id)                  │ look up sessions/{token}
+   │                          │                             │ verify not expired
+   │                          │                             │ look up space membership
+   │                          │◄──{user_id, group}──────────│
    │                          │                             │
-   │                          │──GetSpaceMembership──────────►│
-   │                          │  (user_id, space_id)        │
-   │                          │◄──SpaceMembership{group}────│
+   │                          │ [middleware injects user_id + group into context]
    │                          │                             │
    │                          │ fetch messages from Firestore
    │                          │ messages/ scoped to space_id + convo_id
+   │                          │ filtered to conversations user participates in
    │                          │
-   │◄──HTTP 200 {messages}────│
+   │◄──HTTPS 200 {messages}────│
    │
    │ (CLI writes .md + .json flat files to
    │  <storage-dir>/messages/<space-id>/<convo-id>/)
 ```
 
-Outbound messages (composed in `$EDITOR`, queued locally) are pushed in the same sync request body. The messaging service writes them to Firestore.
+Outbound messages (composed in `$EDITOR`, queued locally) are pushed in the same sync request body.
 
 ---
 
 ### 3. Document Stash Sync (Pull)
 
-Same pattern as messaging sync. The CLI sends an HTTP pull request to `stash-service`; the service verifies identity and space membership via gRPC before returning documents.
+Same middleware pattern as messaging sync. One `ValidateSession` call per request; no additional gRPC round-trips in the handler.
 
 ```
 rook-cli                 stash-service                 user-service
    │                          │                             │
-   │──HTTP GET /sync──────────►│                             │
-   │  (Bearer: SSH key token)  │                             │
-   │                          │──GetUserByKey(fingerprint)──►│
-   │                          │◄──User{id, ...}─────────────│
-   │                          │                             │
-   │                          │──GetSpaceMembership──────────►│
-   │                          │◄──SpaceMembership{group}────│
+   │──HTTPS GET /sync──────────►│                             │
+   │  Authorization: Bearer    │                             │
+   │  X-Rook-Space-ID: {id}    │                             │
+   │                          │──ValidateSession(token,──────►│
+   │                          │   space_id)                  │ verify token + membership
+   │                          │◄──{user_id, group}──────────│
    │                          │                             │
    │                          │ fetch documents from Firestore
    │                          │ stash/ scoped to space_id
    │                          │ filtered by: owned by user OR shared with user's group
    │                          │
-   │◄──HTTP 200 {documents}───│
+   │◄──HTTPS 200 {documents}───│
    │
    │ (CLI writes .md + .json flat files to
    │  <storage-dir>/stash/<space-id>/)
 ```
 
-On conflict (same document modified locally and on server), last-write-wins — the server timestamp is authoritative. No concurrent editing is expected at PoC scale.
+On conflict (same document modified locally and on server), last-write-wins — the server timestamp is authoritative.
 
 ---
 
 ### 4. Guide Fetch (Read-only)
 
-When the user selects a guide from the wishlist, the CLI fetches its assets from `guides-service`. The service verifies access via `CheckAppAccess` before returning the guide bundle.
+When the user selects a guide, the CLI fetches its assets from `guides-service`. The service validates the session and then performs a defence-in-depth `CheckAppAccess` call before returning the bundle.
 
 ```
 rook-cli                 guides-service                user-service
    │                          │                             │
-   │──HTTP GET /guide/{id}────►│                             │
-   │  (Bearer: SSH key token)  │                             │
-   │                          │──GetUserByKey(fingerprint)──►│
-   │                          │◄──User{id, ...}─────────────│
+   │──HTTPS GET /guide/{id}────►│                             │
+   │  Authorization: Bearer    │                             │
+   │  X-Rook-Space-ID: {id}    │                             │
+   │                          │──ValidateSession(token,──────►│
+   │                          │   space_id)                  │ verify token + membership
+   │                          │◄──{user_id, group}──────────│
    │                          │                             │
    │                          │──CheckAppAccess──────────────►│
-   │                          │  (user_id, space_id, guide_id)│
+   │                          │  (user_id, space_id,        │ check group ACL
+   │                          │   guide_id)                 │
    │                          │◄──AccessDecision{ALLOWED}───│
    │                          │                             │
    │                          │ fetch guide assets from Firestore
    │                          │ guides/ — .md content, lipgloss .yml, YAML config
    │                          │
-   │◄──HTTP 200 {guide bundle}│
+   │◄──HTTPS 200 {guide bundle}│
    │
    │ (CLI renders guide full-screen via charmbracelet/glamour + lipgloss)
 ```
 
-If `CheckAppAccess` returns `DENIED`, `guides-service` returns HTTP 403. The guide is not surfaced in the wishlist for that user in the first place (filtered at auth time by `user-service`), so this is a defence-in-depth check.
+If `CheckAppAccess` returns `DENIED`, `guides-service` returns HTTP 403. The guide is not surfaced in the app list for that user in the first place (filtered at auth time via `GET /spaces/{id}/apps`), so this is a defence-in-depth check.
 
 ---
 
 ### 5. Guide Publish (Builder → guides-service)
 
-When the user publishes a guide from the guide builder TUI, the CLI uploads the validated guide bundle to `guides-service`. The service verifies the caller is an authenticated space member before accepting the upload.
+When the user publishes a guide from the builder TUI, the CLI uploads the validated bundle to `guides-service`.
 
 ```
 rook-cli (guide builder)  guides-service               user-service
    │                          │                             │
-   │──HTTP POST /guide────────►│                             │
+   │──HTTPS POST /guide────────►│                             │
    │  body: {.md, .yml,        │                             │
    │   yaml-config, meta}      │                             │
-   │  (Bearer: SSH key token)  │                             │
-   │                          │──GetUserByKey(fingerprint)──►│
-   │                          │◄──User{id, ...}─────────────│
-   │                          │                             │
-   │                          │──GetSpaceMembership──────────►│
-   │                          │◄──SpaceMembership{group}────│
+   │  Authorization: Bearer    │                             │
+   │  X-Rook-Space-ID: {id}    │                             │
+   │                          │──ValidateSession(token,──────►│
+   │                          │   space_id)                  │ verify token + membership
+   │                          │◄──{user_id, group}──────────│
    │                          │                             │
    │                          │ write guide assets to Firestore
    │                          │ set creator as guide owner
    │                          │ set initial ACL (creator's group, or as specified)
    │                          │
-   │◄──HTTP 201 {guide_id}────│
+   │◄──HTTPS 201 {guide_id}────│
    │
-   │ (guide now visible in wishlist for permitted groups)
+   │ (guide now visible in app list for permitted groups)
 ```
 
 ---
@@ -296,9 +363,9 @@ rook-cli (guide builder)  guides-service               user-service
 
 | gRPC status | Meaning | HTTP equivalent returned to CLI |
 |-------------|---------|--------------------------------|
-| `codes.NotFound` | User key not registered, or space/guide does not exist | 404 |
+| `codes.NotFound` | Session token unknown, or space/guide does not exist | 404 |
 | `codes.PermissionDenied` | User is not a member of the space, or ACL denies access | 403 |
-| `codes.Unauthenticated` | Missing or invalid OIDC token on inter-service call | 500 (internal — caller bug) |
+| `codes.Unauthenticated` | Missing/expired session token, or invalid OIDC token on inter-service call | 401 (user token) / 500 (inter-service — caller bug) |
 | `codes.Unavailable` | Downstream service unreachable | 503 |
 | `codes.Internal` | Unexpected error in callee | 500 |
 
@@ -323,6 +390,13 @@ Firestore root
 │       ├── config (doc)
 │       └── groups/ (subcollection) # group definitions + app ACLs
 │
+├── sessions/
+│   └── {token} (doc)               # user-service — session token → user_id + expiry
+│
+├── auth/
+│   └── nonces/
+│       └── {nonce} (doc)           # user-service — challenge nonce + TTL + used flag
+│
 ├── messages/
 │   └── {space_id}/                 # messaging-service
 │       └── {convo_id}/
@@ -345,7 +419,10 @@ Firestore root
 
 - All inter-service calls are gRPC — no raw HTTP between services
 - `user-service` is the only gRPC server; all other services are clients only (of `UserService`)
-- gRPC endpoints are never exposed to `rook-cli` directly — the CLI always talks HTTP or SSH
+- gRPC endpoints are never exposed to `rook-cli` directly — the CLI always talks HTTPS
 - Services never access another service's Firestore collections — only their own namespace
 - All service addresses are environment-variable-driven — see `USER_SERVICE_ADDR` and equivalents in the gRPC ADR
 - OIDC bearer tokens are required on all inter-service gRPC calls in deployed (Cloud Run) environments
+- `SessionAuthMiddleware` is applied to all HTTP handlers in all services — session validation is never done inside a handler
+- All CLI requests must include `X-Rook-Space-ID`; `ValidateSession` resolves both user identity and space membership in one gRPC call — no second `GetSpaceMembership` call per request
+- `GetUserByKey` is internal to `user-service` only — downstream services must never call it directly

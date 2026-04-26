@@ -45,10 +45,10 @@ Chosen architecture: **three-component system** — `rook-server` (Go microservi
   - **Messaging service** — async 1:1 and 1:many conversations (private messages are 1:1 conversations; not a separate service) via custom pull-based HTTP protocol (see [`2026-04-25-real-time-messaging-protocol.md`](2026-04-25-real-time-messaging-protocol.md))
   - **Guides service** — space-scoped TUI micro-apps (tutorials, explainers, admin notices) accessible via wishlist; replaces "bulletin board" (see [`2026-04-25-rook-cli-features-and-ux-architecture.md`](2026-04-25-rook-cli-features-and-ux-architecture.md))
   - **Document/stash service** — store, retrieve, and permission-control markdown documents
-  - **User management service** — manages user records, spaces, groups, and per-app ACL in Firestore. `charmbracelet/wish` handles the SSH handshake and key validation at the server boundary; it does not manage or store keys. Key generation happens locally in `rook-cli`; key registration is performed by a server admin via `rook-server-cli` (see [`2026-04-25-rook-server-admin-cli.md`](2026-04-25-rook-server-admin-cli.md)).
+  - **User management service** — manages user records, spaces, groups, and per-app ACL in Firestore. Handles HTTPS challenge-response auth (`GET /auth/challenge`, `POST /auth/verify`), session token issuance and validation, and space/app discovery (`GET /spaces`, `GET /spaces/{space-id}/apps`). Key generation happens locally in `rook-cli`; key registration is performed by a server admin via `rook-server-cli` (see [`2026-04-25-rook-server-admin-cli.md`](2026-04-25-rook-server-admin-cli.md)).
 - **Inter-service communication**: **gRPC with Protobuf** — unary RPCs only; Go stubs generated via `buf`; OIDC bearer tokens for Cloud Run service-to-service auth. See [`2026-04-25-grpc-inter-service-communication.md`](2026-04-25-grpc-inter-service-communication.md).
 - **Data layer**: Each service owns its own **Google Cloud Firestore** collection namespace. No shared collections across services. Go client: `cloud.google.com/go/firestore`. Kubernetes portability of the data layer is explicitly a non-goal at this deployment scale.
-- **Auth**: SSH handshake and key validation via `charmbracelet/wish` (SSH server middleware); service/app routing via `charmbracelet/wishlist`. Key generation is local to `rook-cli`; key storage is in Firestore (`users/{id}/keys/`); key registration is an admin operation via `rook-server-cli`.
+- **Auth**: SSH key-based challenge-response over HTTPS. `user-service` issues a nonce (`GET /auth/challenge`); `rook-cli` signs it with the user's SSH private key and submits it (`POST /auth/verify`); on success `user-service` returns an opaque session token stored in Firestore. All subsequent CLI requests carry the token as `Authorization: Bearer`. Space/app discovery is via authenticated HTTP endpoints on `user-service` (`GET /spaces`, `GET /spaces/{space-id}/apps`) — not SSH or wishlist. Key generation is local to `rook-cli`; key storage is in Firestore (`users/{id}/keys/`); key registration is an admin operation via `rook-server-cli`. See [`2026-04-25-ssh-auth-identity-chain-and-cloud-run-topology.md`](2026-04-25-ssh-auth-identity-chain-and-cloud-run-topology.md).
 - **Architecture diagrams**: component relationship overview (all three binaries, personas, protocols, data boundaries) — see [`../architecture/component-overview.md`](../architecture/component-overview.md); per-service detail, service responsibilities, Firestore layout, and gRPC call flows — see [`../architecture/grpc-call-flows.md`](../architecture/grpc-call-flows.md)
 
 #### rook-cli
@@ -57,13 +57,13 @@ Chosen architecture: **three-component system** — `rook-server` (Go microservi
 - **TUI framework**: `charmbracelet/bubbletea` (Elm architecture — `Model`/`Update`/`View`); runs entirely locally
 - **Architecture**: Hybrid — local-first launcher model; server features sync lazily on user initiative. Each major feature is a full-screen Bubble Tea app that launches from and returns to the launcher.
 - **Navigation**: Launcher home screen with server reachability indicators, local feature shortcuts (always available), connected feature shortcuts (greyed/hidden when offline), and a space selector (shown only when the user belongs to multiple spaces). Features open full-screen; exit always returns to launcher.
-- **Auth**: `rook ssh user@server` subcommand; `charmbracelet/wish` for SSH key auth, `charmbracelet/wishlist` for space-scoped, ACL-filtered app discovery. Auth state is session-scoped; re-auth is required on next launch.
+- **Auth**: `rook auth user@server` subcommand; HTTPS challenge-response using the user's SSH private key (see [`2026-04-25-ssh-auth-identity-chain-and-cloud-run-topology.md`](2026-04-25-ssh-auth-identity-chain-and-cloud-run-topology.md)); session token cached in-memory. Space/app discovery via authenticated HTTP endpoints on `user-service`. Auth state is session-scoped; re-auth is required on next launch.
 - **Spaces, groups, and ACL**: A server hosts one or more spaces; a user may belong to multiple spaces. All data is fully segregated by space — no cross-space access. Within a space, users are assigned to a group; each group has a per-app ACL controlling which wishlist apps are accessible. Space membership and ACL are server-authoritative, cached locally in `.json`.
 - **Local storage**: Flat files — `.md` for content, `.json` for metadata; no embedded database. Config at `$XDG_CONFIG_HOME/rook/config.json`; flat-file data root at `$XDG_CONFIG_HOME/rook/storage/` by default (fully relocatable via `storage-dir` config key). Space data is always under `<storage-dir>/<feature>/<space-id>/`.
 - **Features**: Document stash (offline create/edit/view/browse; online sync and share), unified local+server search, async pull-only messaging, and space-scoped guides. A dedicated guide builder TUI enables guide authoring, preview, validation, and publish entirely within `rook-cli` — no separate admin tooling required.
 - **Sync conflict resolution**: Last-write-wins. Concurrent editing is not an expected use case.
 - **Distribution**: Build from source. macOS and Linux run natively; Windows users run under WSL. No packaged binary distribution for the reference implementation.
-- **Excluded dependency**: `charmbracelet/charm` is archived (March 2025) and must not be used. Server-side user management and file store use Google Cloud Firestore; CLI-side storage is plain flat files.
+- **Excluded dependencies**: `charmbracelet/charm` is archived (March 2025) and must not be used. `charmbracelet/wish` and `charmbracelet/wishlist` are not used anywhere in the system — auth and app discovery are handled over HTTPS. Server-side user management and file store use Google Cloud Firestore; CLI-side storage is plain flat files.
 - **Full feature specification**: see [`2026-04-25-rook-cli-features-and-ux-architecture.md`](2026-04-25-rook-cli-features-and-ux-architecture.md)
 
 #### rook-docs
@@ -105,15 +105,15 @@ Chosen architecture: **three-component system** — `rook-server` (Go microservi
   - `rook-cli/` — single Go module, Bubble Tea application
   - `rook-docs/` — Hugo site with Hextra theme; markdown content under `rook-docs/content/`
 - **Dependencies**:
-  - Server: `charmbracelet/wish`, `charmbracelet/wishlist`, `google.golang.org/grpc`, `cloud.google.com/go/firestore`
-  - CLI: `charmbracelet/bubbletea`, `charmbracelet/bubbles`, `charmbracelet/lipgloss`, `charmbracelet/glamour`, `charmbracelet/glow`, `charmbracelet/wish`, `charmbracelet/wishlist`
+  - Server: `google.golang.org/grpc`, `cloud.google.com/go/firestore`, `golang.org/x/crypto` (SSH key parsing and signature verification in `user-service`)
+  - CLI: `charmbracelet/bubbletea`, `charmbracelet/bubbles`, `charmbracelet/lipgloss`, `charmbracelet/glamour`, `charmbracelet/glow`, `golang.org/x/crypto` (SSH key signing for HTTPS challenge-response auth)
   - Inter-service: `google.golang.org/grpc` + `google.golang.org/protobuf` (see [`2026-04-25-grpc-inter-service-communication.md`](2026-04-25-grpc-inter-service-communication.md))
   - Docs: Hugo + Hextra theme (`github.com/imfing/hextra`)
 - **Patterns to follow**:
   - Each `rook-server` service is an independent Go binary with its own `main.go` and data store
   - CLI uses Bubble Tea `Model`/`Update`/`View` for all interactive screens
   - Online and offline logic are separated into distinct Bubble Tea models, composed at the top level
-  - Auth always flows through `charmbracelet/wish` — no bespoke auth mechanisms
+  - Auth always flows through the HTTPS challenge-response protocol on `user-service` — no bespoke auth mechanisms and no SSH transport on the server
   - Service endpoints are always environment-variable-driven — no hardcoded URLs
   - Local CLI state is always flat files (`.md` + `.json`) — no embedded DB for the reference impl
 - **Patterns to avoid**:
@@ -139,7 +139,7 @@ Chosen architecture: **three-component system** — `rook-server` (Go microservi
 - [ ] CLI document stash creates, reads, and edits a `.md` file offline — no server required
 - [ ] CLI syncs a local document to the server and the server reflects the update
 - [ ] Last-write-wins: editing a document locally then syncing overwrites the server version
-- [ ] User auth via SSH key succeeds end-to-end through `charmbracelet/wish`
+- [ ] User auth via `rook auth user@server` completes the HTTPS challenge-response flow and returns a valid session token
 - [ ] Space-filtered wishlist: user sees only apps their group's ACL permits in their current space
 - [ ] User with multiple spaces sees the space selector on the launcher home screen; single-space user does not
 - [ ] Space data segregation: data under `<storage-dir>/<feature>/<space-a>/` is never accessible from a space-b context

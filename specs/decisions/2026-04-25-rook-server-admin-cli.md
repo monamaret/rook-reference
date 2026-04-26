@@ -157,9 +157,16 @@ User (rook-cli first-run)              Admin (rook-server-cli)         user-serv
         │                                      │                            │ users/{u-abc}/spaces/{s-xyz}
         │                                      │                            │ (group: "users")
         │                                      │                            │
-        │ user runs: rook ssh alice@server      │                            │
-        │──SSH connect (public key in handshake)──────────────────────────►│
-        │◄──wishlist (space-filtered apps)────────────────────────────────│
+        │ user runs: rook auth alice@server     │                            │
+        │──HTTPS GET /auth/challenge──────────────────────────────────────►│
+        │◄──nonce──────────────────────────────────────────────────────────│
+        │ signs nonce with SSH private key      │                            │
+        │──HTTPS POST /auth/verify { pubkey, nonce, signature }───────────►│
+        │                                       │                            │ verifies signature
+        │                                       │                            │ against registered key
+        │◄──session token──────────────────────────────────────────────────│
+        │──HTTPS GET /spaces (Bearer: token)──────────────────────────────►│
+        │◄──space list + ACL-filtered app list────────────────────────────│
 ```
 
 The out-of-band key exchange (user → admin) is an explicit PoC constraint. A production system would implement a self-registration flow with admin approval, but that is out of scope.
@@ -199,7 +206,7 @@ The out-of-band key exchange (user → admin) is an explicit PoC constraint. A p
 
 - [ ] `rook-server-cli` builds from source with `go build` in `rook-server/admin-cli/`
 - [ ] `rook-server-cli user register-key` registers a public key and creates a user record in Firestore via `user-service`
-- [ ] After `register-key`, the user can authenticate via `rook ssh user@server` using the registered key
+- [ ] After `register-key`, the user can authenticate via `rook auth user@server`; `POST /auth/verify` succeeds with the registered key and returns a session token
 - [ ] `rook-server-cli user list` returns all registered users in human-readable and `--json` formats
 - [ ] `rook-server-cli user add-to-space` assigns the user to a space and group; subsequent `GetSpaceMembership` gRPC call returns the correct group
 - [ ] `rook-server-cli user set-group` updates a user's group within a space without removing their membership
