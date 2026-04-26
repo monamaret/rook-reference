@@ -197,23 +197,24 @@ $XDG_CONFIG_HOME/rook/storage/
 
 ---
 
-### 4.8 Admin CLI (rook-server)
+### 4.8 Admin CLI (rook-server-cli)
 
-**Owner:** rook-server (user-service)
+**Owner:** rook-server (user-service + rook-server-cli binary)
 
-A lightweight admin surface for server operators and space admins. Exposed as HTTP endpoints on user-service, not as a separate binary for the PoC.
+A standalone Go binary (`rook-server-cli`) that issues gRPC calls to `user-service`'s `AdminService`. It is the only admin interface for the PoC — there are no admin HTTP endpoints. Admin operations are authenticated with a pre-shared `ROOK_ADMIN_TOKEN` passed as gRPC metadata; the token is never shared with `rook-cli` or regular users.
 
 Key operations:
-- Register a new user's SSH public key.
-- Create a space; add/remove members.
-- Assign users to groups; update group ACLs for app access.
-- List active sessions; revoke a session token.
-- View space membership.
+- `rook-server-cli user register-key` — register a new user's SSH public key.
+- `rook-server-cli space create` / `rook-server-cli space list` — create and list spaces.
+- `rook-server-cli user add-to-space` / `rook-server-cli user remove-from-space` — manage space membership.
+- `rook-server-cli user set-group` — assign or change a user's group (controls ACLs).
+- `rook-server-cli space members` — view space membership.
 
 **Acceptance criteria:**
-- [ ] A space admin can register a user's public key and assign space/group membership.
-- [ ] A space admin can revoke a session token; the revoked token is rejected on the next request.
-- [ ] Admin endpoints require an admin-scoped credential — they are not accessible with a user session token.
+- [ ] A space admin can register a user's public key and assign space/group membership via `rook-server-cli`.
+- [ ] A space admin can revoke a session via the `RevokeSession` gRPC RPC on `AdminService`; the revoked token is rejected on the next request.
+- [ ] All `AdminService` RPCs require a valid `ROOK_ADMIN_TOKEN` — calls without it are rejected with `UNAUTHENTICATED`.
+- [ ] `rook-cli` users cannot invoke `AdminService` RPCs — the admin token is never distributed to end users.
 
 ---
 

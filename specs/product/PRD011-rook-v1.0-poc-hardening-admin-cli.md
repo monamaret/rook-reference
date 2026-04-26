@@ -20,8 +20,8 @@ This release hardens the full Rook PoC for demonstration readiness. It delivers 
 _To be detailed in scoping. Proposed areas:_
 
 - Graceful re-auth flow: detect 401 responses anywhere in the CLI, prompt for re-authentication inline, and replay the original request on success without losing user context
-- Session revocation: `POST /admin/sessions/{id}/revoke` in user-service; `rook auth logout --all` to revoke all sessions for an identity
-- Admin CLI complete: `rook admin keys`, `rook admin spaces`, `rook admin groups`, `rook admin sessions` — full CRUD for all admin-provisioned resources
+- Session revocation: `RevokeSession` gRPC RPC on `AdminService` in user-service; `rook-server-cli session revoke --all` to revoke all sessions for an identity
+- Admin CLI complete: `rook-server-cli user`, `rook-server-cli space`, `rook-server-cli session` — full CRUD for all admin-provisioned resources
 - First-run setup flow polish: detect unconfigured state, guide user through server endpoint config, `rook auth`, and space selection in a single onboarding sequence
 - End-to-end PoC validation: scripted walkthrough covering auth, stash sync, messaging, and guide read/publish across two identities in a shared space
 - Cloud Run deployment verification: all services (`user-service`, `stash-service`, `messaging-service`, `guides-service`) deployed and reachable on Cloud Run with the CLI configured against the live endpoints
