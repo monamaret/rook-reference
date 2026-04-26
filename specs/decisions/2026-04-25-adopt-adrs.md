@@ -12,7 +12,7 @@ The Rook reference implementation is a multi-component project (server, CLI) wit
 
 ## Decision Outcome
 
-Adopted. ADRs will be stored in `docs/decisions/` using date-prefixed filenames (`YYYY-MM-DD-short-title.md`) and the MADR-style template for decisions with multiple options, or the simple template for clear-cut decisions.
+Adopted. ADRs will be stored in `specs/decisions/` using date-prefixed filenames (`YYYY-MM-DD-short-title.md`) and the MADR-style template for decisions with multiple options, or the simple template for clear-cut decisions.
 
 ### Consequences
 
@@ -22,4 +22,4 @@ Adopted. ADRs will be stored in `docs/decisions/` using date-prefixed filenames 
 
 ## More Information
 
-See `docs/decisions/README.md` for conventions and the full ADR index.
+See `specs/decisions/README.md` for conventions and the full ADR index.
