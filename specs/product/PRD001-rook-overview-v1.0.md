@@ -1,11 +1,11 @@
-# Rook — Product Requirements Document
+# Rook — Project Overview for PoC
 
 **ID:** PRD001  
-**Version:** v0.1 (alpha)  
+**Version:** v1.0 (PoC complete)  
 **Status:** Draft  
 **Date:** 2026-04-25  
 **Author:** Mona Maret  
-**Scope:** rook-server · rook-cli (v0 PoC through v1 GA)
+**Scope:** North-star reference for rook-server · rook-cli through PoC completion · Per-release detail in PRD002–PRD011
 
 ---
 
