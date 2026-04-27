@@ -14,7 +14,7 @@ Each release of Rook has a corresponding release guide in this directory. Releas
 
 | Version | Codename | PRD | Status | Target Date |
 |---------|----------|-----|--------|-------------|
-| v0.1 | Project Skeleton | [PRD002](../product/PRD002-rook-v0.1-project-skeleton.md) | — | — |
+| [v0.1](v0.1-release-guide.md) | Project Skeleton | [PRD002](../product/PRD002-rook-v0.1-project-skeleton.md) | `ready` | 2026-04-26 |
 | v0.2 | Auth Foundation | [PRD003](../product/PRD003-rook-v0.2-auth-foundation.md) | — | — |
 | v0.3 | Spaces and Identity | [PRD004](../product/PRD004-rook-v0.3-spaces-and-identity.md) | — | — |
 | v0.4 | Stash Service | [PRD005](../product/PRD005-rook-v0.4-stash-service.md) | — | — |
