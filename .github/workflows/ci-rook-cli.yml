@@ -1,0 +1,23 @@
+name: CI — rook-cli
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "rook-cli/**"
+      - ".github/workflows/ci-rook-cli.yml"
+      - ".github/workflows/_go-ci.yml"
+      - ".golangci.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "rook-cli/**"
+      - ".github/workflows/ci-rook-cli.yml"
+      - ".github/workflows/_go-ci.yml"
+      - ".golangci.yml"
+
+jobs:
+  ci:
+    uses: ./.github/workflows/_go-ci.yml
+    with:
+      working-directory: rook-cli
