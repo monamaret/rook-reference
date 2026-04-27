@@ -1,6 +1,6 @@
 ---
-status: proposed
-date: 2026-04-25
+status: accepted
+date: 2026-04-26
 decision-makers: Mona Maret
 consulted: Mona Maret
 informed: Mona Maret
@@ -12,7 +12,12 @@ informed: Mona Maret
 
 The system architecture ADR ([`2026-04-25-rook-reference-system-architecture.md`](2026-04-25-rook-reference-system-architecture.md)) establishes `rook-cli` as a local-first Go binary with a Bubble Tea TUI that syncs lazily with `rook-server`. This ADR defines the full feature set, UX model, navigation architecture, and rendering strategy for `rook-cli` in enough detail for implementation to begin.
 
-What are the features, UX flows, component boundaries, and rendering approach for `rook-cli`?
+Two distinct questions are resolved here:
+
+1. **Navigation model**: How does the user move between features inside `rook-cli`? (launcher vs persistent shell vs per-app binary)
+2. **CLI dispatch model**: How are commands and subcommands routed? (Cobra + fang vs pure Bubble Tea launcher)
+
+These questions are separable: the navigation model governs the TUI experience after a command launches; the dispatch model governs how the binary is invoked from the shell.
 
 ## Decision Drivers
 
@@ -24,16 +29,99 @@ What are the features, UX flows, component boundaries, and rendering approach fo
 - Server connectivity is ambient and advisory, never a blocker for local workflows
 - Spaces are the primary organizational boundary — all server-side data is segregated by space with no cross-space access
 - The architecture must not foreclose adding new guides or services to the wishlist without CLI changes
+- `rook-cli` should be scriptable and composable — useful for asset generation, automation, and CI workflows, not only interactive use
+- `rook-docs` manpage generation should be achievable without custom tooling
 
 ## Considered Options
 
-- **Launcher model** — home screen is a root launcher; apps take over the terminal while active and return to launcher on exit
-- **Persistent shell model** — a status bar or split-pane is always visible while apps run in a content area
-- **Full-screen per-app model** — each feature is a fully independent binary invoked by the CLI
+### Navigation model (TUI)
+
+- **Launcher model** — `rook` home screen is a root launcher; feature TUIs take over the terminal while active and return to launcher on exit
+- **Persistent shell model** — a status bar or split-pane is always visible while feature TUIs run in a content area
+- **Full-screen per-app model** — each feature is a fully independent binary invoked by the CLI dispatcher
+
+### CLI dispatch model
+
+- **Pure Bubble Tea launcher** — `rook` (no subcommands) launches a full-screen TUI; all navigation happens inside the TUI; the binary has no shell-invocable subcommands
+- **Cobra + fang hybrid** — cobra subcommands dispatch to feature handlers (which may launch Bubble Tea TUI models internally); fang wraps the root command for styled output, manpage generation, and shell completions; `rook` with no subcommand opens the launcher TUI as the default `RunE`
 
 ## Decision Outcome
 
-Chosen model: **Launcher**, because it is the simplest model to implement correctly in Bubble Tea, gives each feature full terminal real estate, and avoids the complexity of persistent layout management across app boundaries.
+**Navigation model**: **Launcher**, because it is the simplest model to implement correctly in Bubble Tea, gives each feature full terminal real estate, and avoids the complexity of persistent layout management across app boundaries.
+
+**CLI dispatch model**: **Cobra + fang hybrid**, because:
+
+- Subcommands (`rook stash sync`, `rook guide save`, `rook auth`) are directly shell-invocable — enabling scripting, CI automation, and asset generation workflows without entering the TUI
+- `fang` automatically wires a hidden `man` subcommand (via `mango-cobra`) that generates manpages from cobra command metadata — directly enabling `rook-docs` manpage generation with no custom tooling
+- `fang` provides shell completion generation out of the box
+- The Charmbracelet team uses this exact pattern for their own CLI tools (`gum`, `soft-serve`, etc.) — it is idiomatic in the Charmbracelet ecosystem
+- Individual commands that need interactive UX launch Bubble Tea models internally via `tea.NewProgram`; commands that don't (e.g., `rook guide save {id}`) remain pure stdio — no TUI overhead for automation use cases
+- `rook` with no subcommand runs the launcher TUI as the cobra root command's `RunE`, preserving the full-screen interactive experience as the default
+
+### Consequences
+
+- Good, because `rook stash sync`, `rook guide save`, and similar operations are scriptable from shell or CI without spawning a TUI process
+- Good, because `fang.Execute` handles styled errors, `--version`, manpages, and completions — eliminating significant hand-rolled boilerplate
+- Good, because the `cmd/` package layout (`cmd/root.go`, `cmd/stash.go`, `cmd/guide.go`, etc.) is a well-understood Go CLI convention that any contributor can navigate
+- Good, because manpages for `rook-docs` are generated directly from cobra command metadata via `rook man` — no separate documentation pipeline
+- Bad, because `rook-cli/go.mod` gains external dependencies: `github.com/spf13/cobra`, `charm.land/fang/v2` (and its transitive deps: `lipgloss/v2`, `colorprofile`, `mango-cobra`). This violates the v0.1 zero-external-dependency constraint for the skeleton — cobra + fang adoption is a **v0.2 task**, not v0.1.
+- Bad, because cobra's flag parsing model and Bubble Tea's event loop must be carefully composed — cobra `RunE` launches `tea.NewProgram`; the program must not conflict with cobra's stdin/stdout handling. Use `tea.WithInput(cmd.InOrStdin())` and `tea.WithOutput(cmd.OutOrStdout())` to thread I/O correctly.
+- Neutral, because `cmd/root.go` is introduced in v0.2 alongside cobra; `main.go` in v0.1 remains hand-rolled flag parsing as already implemented
+
+## Pros and Cons of the Options
+
+### Pure Bubble Tea launcher (CLI dispatch)
+
+A single `rook` invocation with no subcommands; all feature navigation happens inside the TUI. The binary has no shell-invocable subcommands; `--version` and `--help` are the only flags.
+
+- Good, because the binary surface area is minimal — nothing to document beyond `rook [--version] [--help]`
+- Good, because zero external dependencies beyond Bubble Tea and Bubbles
+- Good, because all UX is fully controlled — no cobra help formatting to override or work around
+- Bad, because every feature interaction requires entering the TUI — not scriptable, not automatable from CI or shell scripts
+- Bad, because manpage generation requires custom tooling (cobra's `mango` integration is not available)
+- Bad, because shell completions require hand-rolling (cobra provides these for free)
+- Bad, because future features like `rook guide save {id}` or `rook stash sync` cannot be called non-interactively — blocking automation and asset generation use cases
+- Bad, because the Charmbracelet ecosystem does not provide a canonical launcher-only dispatch pattern — `bubbletea` examples all launch from within cobra `RunE`
+
+### Cobra + fang hybrid (CLI dispatch) ✅ chosen
+
+Cobra subcommands dispatch to feature handlers (TUI or stdio); `fang.Execute` wraps the root command.
+
+- Good, because subcommands are shell-invocable and scriptable without entering the TUI
+- Good, because `fang` provides manpage generation (`rook man > rook.1`), shell completions, styled help/errors, and `--version` out of the box
+- Good, because the `cmd/` package layout is idiomatic Go and familiar to contributors
+- Good, because individual commands decide independently whether to spawn a Bubble Tea program — interactive and non-interactive commands coexist cleanly
+- Good, because this is the Charmbracelet team's own pattern for their CLI tools
+- Neutral, because cobra + fang add external dependencies — acceptable from v0.2 onward but explicitly deferred from v0.1
+- Bad, because cobra's I/O model and Bubble Tea's program I/O must be composed carefully (see Consequences above)
+
+### Launcher navigation model ✅ chosen
+
+`rook` home screen is a root launcher TUI; feature TUIs take full terminal ownership while active and return to the launcher on exit.
+
+- Good, because each feature gets full terminal real estate — no layout management complexity
+- Good, because the simplest model to implement correctly in Bubble Tea
+- Good, because entry/exit points are clearly defined — launcher is always the shell; feature always returns to launcher
+- Neutral, because the launcher is the default `rook` cobra `RunE` — cobra dispatch and launcher model compose cleanly
+- Bad, because navigating to a feature always requires entering the launcher first — no direct deep-link from shell (mitigated by shell-invocable subcommands in the hybrid dispatch model)
+
+### Persistent shell model (navigation)
+
+A status bar or split-pane remains visible while feature TUIs run in a content area.
+
+- Good, because ambient server status and space selector are always visible
+- Bad, because persistent layout management in Bubble Tea (nested models sharing the terminal) is significantly more complex to implement correctly
+- Bad, because feature TUIs lose full terminal real estate — constrains UI design of each feature
+- Rejected: complexity not justified at PoC scale
+
+### Full-screen per-app model (navigation)
+
+Each feature is a fully independent binary invoked by the dispatcher.
+
+- Good, because each binary is fully isolated — no shared state or model composition
+- Bad, because distributing and versioning multiple binaries adds release pipeline complexity
+- Bad, because UX continuity between features (returning to the launcher) requires re-launching the launcher binary
+- Rejected: distribution complexity not justified at PoC scale
 
 ---
 
@@ -208,10 +296,17 @@ Users can save published guides for offline reading using an explicit save comma
 
 ## Implementation Plan
 
+> **Phasing note**: cobra + fang are introduced in **v0.2**. `main.go` in v0.1 remains hand-rolled flag parsing. Do not add cobra or fang to `rook-cli/go.mod` until v0.2 work begins.
+
 - **Affected paths**:
-  - `rook-cli/main.go` — entry point; detects first-run, launches setup flow or launcher
-  - `rook-cli/setup/` — first-run Bubble Tea setup flow
-  - `rook-cli/launcher/` — home screen model (server status, shortcuts, space selector)
+  - `rook-cli/main.go` — entry point; in v0.2+ calls `fang.Execute(ctx, cmd.Root())` and exits on error
+  - `rook-cli/cmd/root.go` — cobra root command; default `RunE` launches the launcher TUI via `tea.NewProgram`; introduced in v0.2
+  - `rook-cli/cmd/auth.go` — `rook auth` subcommand; introduced in v0.2
+  - `rook-cli/cmd/stash.go` — `rook stash` subcommand group; introduced in v0.5
+  - `rook-cli/cmd/guide.go` — `rook guide` subcommand group; introduced in v0.9
+  - `rook-cli/cmd/messages.go` — `rook messages` subcommand group; introduced in v0.7
+  - `rook-cli/setup/` — first-run Bubble Tea setup flow; launched from root `RunE` when no config detected
+  - `rook-cli/launcher/` — home screen Bubble Tea model (server status, shortcuts, space selector)
   - `rook-cli/auth/` — HTTPS challenge-response flow, SSH key signing, session token cache
   - `rook-cli/stash/` — document stash: browse, view (glow), edit ($EDITOR handoff), sync
   - `rook-cli/search/` — unified local + server search
@@ -220,15 +315,20 @@ Users can save published guides for offline reading using an explicit save comma
   - `rook-cli/guides/builder/` — guide builder TUI (new, edit, preview, validate, publish, manage)
   - `rook-cli/guides/validator/` — YAML config schema validator, lipgloss style validator, markdown link checker
   - `rook-cli/spaces/` — space selector, HTTP-based space/app discovery, membership and ACL cache
-  - `rook-cli/config/` — local config read/write (`$XDG_CONFIG_HOME/rook/config.json`)
+  - `rook-cli/internal/config/` — local config read/write (`$XDG_CONFIG_HOME/rook/config.json`); already implemented in v0.1
 - **Dependencies**:
-  - `charmbracelet/bubbletea` — TUI framework
-  - `charmbracelet/bubbles` — list, textarea, viewport, spinner, textinput components
-  - `charmbracelet/lipgloss` — styling
-  - `charmbracelet/glamour` — markdown rendering for guides
-  - `charmbracelet/glow` — markdown viewing for stash and messages
-  - `golang.org/x/crypto/ssh` — SSH key loading and signing for HTTPS challenge-response auth
+  - `github.com/spf13/cobra` — CLI command routing and flag parsing (v0.2+)
+  - `charm.land/fang/v2` — styled output, `--version`, manpages (`rook man`), shell completions (v0.2+)
+  - `charmbracelet/bubbletea` — TUI framework (v0.2+)
+  - `charmbracelet/bubbles` — list, textarea, viewport, spinner, textinput components (v0.2+)
+  - `charmbracelet/lipgloss` — styling (v0.2+, pulled transitively by fang)
+  - `charmbracelet/glamour` — markdown rendering for guides (v0.9+)
+  - `charmbracelet/glow` — markdown viewing for stash and messages (v0.5+)
+  - `golang.org/x/crypto/ssh` — SSH key loading and signing for HTTPS challenge-response auth (v0.2+)
 - **Patterns to follow**:
+  - `main.go` calls `fang.Execute(ctx, cmd.Root())` and exits on error — no other logic in `main.go`
+  - Commands that launch a TUI do so via `tea.NewProgram(model, tea.WithInput(cmd.InOrStdin()), tea.WithOutput(cmd.OutOrStdout()))` inside cobra `RunE` — always thread I/O through the cobra command to avoid conflicts with fang's output wrapping
+  - Commands that do not need a TUI (e.g., `rook guide save {id}`, `rook stash sync`) use plain `fmt.Fprintln(cmd.OutOrStdout(), ...)` — do not spawn a Bubble Tea program for non-interactive operations
   - Each major feature area is its own Bubble Tea `Model` with its own `Update`/`View`; the launcher composes them
   - Online and offline logic are strictly separated within each feature model
   - `$EDITOR` handoff uses `tea.ExecProcess` to suspend the TUI, launch the editor, and resume cleanly
@@ -237,6 +337,9 @@ Users can save published guides for offline reading using an explicit save comma
   - Config file is always at `$XDG_CONFIG_HOME/rook/config.json`; storage root is always read from `storage-dir` in config
   - Space and app list is fetched from `GET /spaces` and `GET /spaces/{space-id}/apps` after each successful auth, cached locally in `<storage-dir>/cache/spaces.json`, and refreshed on each new session
 - **Patterns to avoid**:
+  - Do not call `os.Exit` inside cobra `RunE` — return an error and let `fang.Execute` handle exit and styled error output
+  - Do not use `cobra.Command.Execute()` directly — always use `fang.Execute(ctx, root, ...)` so styling, manpages, and completions are wired
+  - Do not set `cmd.SilenceErrors` or `cmd.SilenceUsage` manually — fang sets these as part of its opinionated defaults
   - Do not background-poll servers — all network activity is user- or event-initiated
   - Do not share state between spaces in any local data structure
   - Do not embed a markdown editor in the TUI — always delegate to `$EDITOR`

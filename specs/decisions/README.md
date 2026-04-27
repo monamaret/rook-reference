@@ -22,7 +22,7 @@ An Architecture Decision Record (ADR) captures an important architecture decisio
 | 2026-04-25 | [Adopt Architecture Decision Records](2026-04-25-adopt-adrs.md) | accepted |
 | 2026-04-25 | [Rook Reference System Architecture](2026-04-25-rook-reference-system-architecture.md) | proposed |
 | 2026-04-25 | [Real-Time Messaging Protocol: IRC vs. Custom](2026-04-25-real-time-messaging-protocol.md) | proposed |
-| 2026-04-25 | [rook-cli Features and UX Architecture](2026-04-25-rook-cli-features-and-ux-architecture.md) | proposed |
+| 2026-04-25 | [rook-cli Features and UX Architecture](2026-04-25-rook-cli-features-and-ux-architecture.md) | accepted |
 | 2026-04-25 | [Use gRPC for rook-server Inter-Service Communication](2026-04-25-grpc-inter-service-communication.md) | accepted |
 | 2026-04-25 | [SSH Auth Identity Chain and Cloud Run Deployment Topology](2026-04-25-ssh-auth-identity-chain-and-cloud-run-topology.md) | proposed |
 | 2026-04-25 | [Guides Service Architecture](2026-04-25-guides-service-architecture.md) | proposed |
